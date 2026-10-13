@@ -8,6 +8,7 @@ putting gateway credentials in client configuration files.
 ```text
 nullselect version [--json]
 nullselect mcp install --client <client> [options]
+nullselect mcp uninstall --client <client> [options]
 nullselect mcp doctor [options]
 nullselect mcp proxy [options]
 ```
@@ -54,6 +55,13 @@ Verify authentication, protocol negotiation, and the available tool list:
 
 ```sh
 nullselect mcp doctor
+```
+
+Remove only the named client entry and retain a backup of changed JSON
+configuration:
+
+```sh
+nullselect mcp uninstall --client cursor --scope project
 ```
 
 ## Build and verify

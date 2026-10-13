@@ -102,6 +102,78 @@ func TestApplyAcceptsEmptyConfiguration(t *testing.T) {
 	}
 }
 
+func TestRemovePortablePreservesOtherConfiguration(t *testing.T) {
+	project := t.TempDir()
+	target := filepath.Join(project, ".mcp.json")
+	original := []byte(`{"other":true,"mcpServers":{"null-select":{"command":"old"},"keep":{"command":"safe"}}}`)
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := baseOptions(project)
+	options.Now = func() time.Time { return time.Date(2026, 10, 13, 11, 12, 13, 456, time.UTC) }
+	result, err := Remove(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Changed || result.Backup == "" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	servers := document["mcpServers"].(map[string]any)
+	if _, exists := servers["null-select"]; exists {
+		t.Fatal("removed entry remains in configuration")
+	}
+	if _, exists := servers["keep"]; !exists || document["other"] != true {
+		t.Fatalf("unrelated configuration was not preserved: %#v", document)
+	}
+}
+
+func TestRemoveMissingEntryDoesNotRewrite(t *testing.T) {
+	project := t.TempDir()
+	target := filepath.Join(project, ".mcp.json")
+	original := []byte(`{"mcpServers":{"keep":{"command":"safe"}}}`)
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Remove(baseOptions(project))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Changed || result.Backup != "" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+	after, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, original) {
+		t.Fatal("missing-entry removal rewrote configuration")
+	}
+}
+
+func TestRemoveCodexIsIdempotent(t *testing.T) {
+	options := baseOptions(t.TempDir())
+	options.Client = "codex"
+	options.Scope = "user"
+	options.CommandExists = func(string) bool { return true }
+	options.CommandProbe = func(string, ...string) error { return errors.New("missing") }
+	options.CommandRunner = func(string, ...string) error { t.Fatal("remove command should not run"); return nil }
+	result, err := Remove(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Changed {
+		t.Fatal("missing Codex entry reported a change")
+	}
+}
+
 func TestApplyCodexUsesSilentProbeAndEnvironmentReference(t *testing.T) {
 	var commands [][]string
 	probes := 0

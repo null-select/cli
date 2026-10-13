@@ -46,3 +46,16 @@ func TestDoctorRequiresCredentialEnvironment(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestUninstallDryRun(t *testing.T) {
+	var stdout bytes.Buffer
+	err := Run(context.Background(), []string{
+		"mcp", "uninstall", "--client", "portable", "--scope", "project", "--dry-run", "--json",
+	}, &stdout, &bytes.Buffer{}, Build{Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"dry_run":true`) || !strings.Contains(stdout.String(), `"changed":false`) {
+		t.Fatalf("unexpected output: %s", stdout.String())
+	}
+}

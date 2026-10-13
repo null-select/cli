@@ -52,6 +52,7 @@ type Result struct {
 	Target        string `json:"target"`
 	Backup        string `json:"backup,omitempty"`
 	DryRun        bool   `json:"dry_run"`
+	Changed       bool   `json:"changed"`
 }
 
 func Apply(options Options) (Result, error) {
@@ -66,6 +67,23 @@ func Apply(options Options) (Result, error) {
 		return installClaudeCode(options)
 	case "cursor", "vscode", "claude-desktop", "copilot", "portable":
 		return installJSON(options)
+	default:
+		return Result{}, fmt.Errorf("unsupported client %q", options.Client)
+	}
+}
+
+func Remove(options Options) (Result, error) {
+	options = defaults(options)
+	if err := validate(options); err != nil {
+		return Result{}, err
+	}
+	switch options.Client {
+	case "codex":
+		return removeCodex(options)
+	case "claude-code":
+		return removeClaudeCode(options)
+	case "cursor", "vscode", "claude-desktop", "copilot", "portable":
+		return removeJSON(options)
 	default:
 		return Result{}, fmt.Errorf("unsupported client %q", options.Client)
 	}
@@ -159,6 +177,28 @@ func installCodex(options Options) (Result, error) {
 	); err != nil {
 		return Result{}, errors.New("add Codex MCP server")
 	}
+	result.Changed = true
+	return result, nil
+}
+
+func removeCodex(options Options) (Result, error) {
+	if options.Scope != "user" {
+		return Result{}, errors.New("Codex stores MCP configuration at user scope; use --scope user")
+	}
+	if !options.CommandExists("codex") {
+		return Result{}, errors.New("Codex CLI was not found on PATH")
+	}
+	result := baseResult(options, "codex mcp configuration")
+	if options.DryRun {
+		return result, nil
+	}
+	if err := options.CommandProbe("codex", "mcp", "get", options.Name, "--json"); err != nil {
+		return result, nil
+	}
+	if err := options.CommandRunner("codex", "mcp", "remove", options.Name); err != nil {
+		return Result{}, errors.New("remove Codex MCP server")
+	}
+	result.Changed = true
 	return result, nil
 }
 
@@ -186,6 +226,25 @@ func installClaudeCode(options Options) (Result, error) {
 	if err := options.CommandRunner("claude", arguments...); err != nil {
 		return Result{}, errors.New("add Claude Code MCP server")
 	}
+	result.Changed = true
+	return result, nil
+}
+
+func removeClaudeCode(options Options) (Result, error) {
+	if !options.CommandExists("claude") {
+		return Result{}, errors.New("Claude Code CLI was not found on PATH")
+	}
+	result := baseResult(options, "claude mcp configuration")
+	if options.DryRun {
+		return result, nil
+	}
+	if err := options.CommandProbe("claude", "mcp", "get", options.Name); err != nil {
+		return result, nil
+	}
+	if err := options.CommandRunner("claude", "mcp", "remove", "--scope", claudeScope(options.Scope), options.Name); err != nil {
+		return Result{}, errors.New("remove Claude Code MCP server")
+	}
+	result.Changed = true
 	return result, nil
 }
 
@@ -220,6 +279,25 @@ func installJSON(options Options) (Result, error) {
 		return Result{}, err
 	}
 	result.Backup = backup
+	result.Changed = true
+	return result, nil
+}
+
+func removeJSON(options Options) (Result, error) {
+	target, topLevel, err := configurationTarget(options)
+	if err != nil {
+		return Result{}, err
+	}
+	result := baseResult(options, target)
+	if options.DryRun {
+		return result, nil
+	}
+	backup, changed, err := removeJSONConfiguration(target, topLevel, options.Name, options.Now())
+	if err != nil {
+		return Result{}, err
+	}
+	result.Backup = backup
+	result.Changed = changed
 	return result, nil
 }
 
@@ -325,6 +403,50 @@ func mergeJSONConfiguration(target, topLevel, name string, entry map[string]any,
 		return "", err
 	}
 	return backup, nil
+}
+
+func removeJSONConfiguration(target, topLevel, name string, now time.Time) (string, bool, error) {
+	raw, err := os.ReadFile(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, errors.New("read existing MCP configuration")
+	}
+	if len(raw) > maximumConfigurationBytes {
+		return "", false, errors.New("existing MCP configuration exceeds 1 MiB")
+	}
+	document := make(map[string]any)
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return "", false, nil
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return "", false, errors.New("existing MCP configuration is not valid JSON")
+	}
+	servers, ok := document[topLevel].(map[string]any)
+	if document[topLevel] != nil && !ok {
+		return "", false, fmt.Errorf("existing %s field is not an object", topLevel)
+	}
+	if servers == nil {
+		return "", false, nil
+	}
+	if _, exists := servers[name]; !exists {
+		return "", false, nil
+	}
+	delete(servers, name)
+	encoded, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return "", false, errors.New("encode MCP configuration")
+	}
+	encoded = append(encoded, '\n')
+	backup := target + ".bak." + now.UTC().Format("20060102T150405.000000000Z")
+	if err := writeExclusive(backup, raw, 0o600); err != nil {
+		return "", false, errors.New("back up existing MCP configuration")
+	}
+	if err := writeAtomic(target, encoded, 0o600); err != nil {
+		return "", false, err
+	}
+	return backup, true, nil
 }
 
 func writeExclusive(path string, data []byte, mode fs.FileMode) error {

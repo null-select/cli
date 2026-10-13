@@ -72,6 +72,8 @@ func runMCP(ctx context.Context, arguments []string, stdout, stderr io.Writer, b
 		return nil
 	case "install":
 		return runInstall(arguments[1:], stdout, stderr)
+	case "uninstall":
+		return runUninstall(arguments[1:], stdout, stderr)
 	case "doctor":
 		return runDoctor(ctx, arguments[1:], stdout, stderr, build)
 	case "proxy":
@@ -82,21 +84,9 @@ func runMCP(ctx context.Context, arguments []string, stdout, stderr io.Writer, b
 }
 
 func runInstall(arguments []string, stdout, stderr io.Writer) error {
-	executable, err := os.Executable()
+	executable, home, project, err := localPaths()
 	if err != nil {
-		return errors.New("locate the nullselect executable")
-	}
-	executable, err = filepathAbs(executable)
-	if err != nil {
-		return errors.New("resolve the nullselect executable path")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return errors.New("locate the user home directory")
-	}
-	project, err := os.Getwd()
-	if err != nil {
-		return errors.New("locate the project directory")
+		return err
 	}
 
 	flags := flag.NewFlagSet("mcp install", flag.ContinueOnError)
@@ -144,6 +134,62 @@ func runInstall(arguments []string, stdout, stderr io.Writer) error {
 		action = "Validated"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s %s for %s scope at %s\n", action, result.Name, result.Scope, result.Target); err != nil {
+		return err
+	}
+	if result.Backup != "" {
+		_, err = fmt.Fprintf(stdout, "Backup: %s\n", result.Backup)
+	}
+	return err
+}
+
+func runUninstall(arguments []string, stdout, stderr io.Writer) error {
+	executable, home, project, err := localPaths()
+	if err != nil {
+		return err
+	}
+	flags := flag.NewFlagSet("mcp uninstall", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	client := flags.String("client", "", "target MCP client")
+	scope := flags.String("scope", "user", "configuration scope: user or project")
+	name := flags.String("name", "null-select", "MCP server name")
+	projectDirectory := flags.String("project-dir", project, "project directory for project-scoped configuration")
+	dryRun := flags.Bool("dry-run", false, "validate and report the target without changing it")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(arguments); err != nil {
+		return flagError(err)
+	}
+	if flags.NArg() != 0 {
+		return errors.New("mcp uninstall does not accept positional arguments")
+	}
+	if *client == "" {
+		return fmt.Errorf("--client is required; supported clients: %s", install.SupportedClients())
+	}
+	result, err := install.Remove(install.Options{
+		Client:           strings.ToLower(*client),
+		Scope:            strings.ToLower(*scope),
+		Name:             *name,
+		Executable:       executable,
+		HomeDirectory:    home,
+		ProjectDirectory: *projectDirectory,
+		DryRun:           *dryRun,
+		Stdout:           stdout,
+		Stderr:           stderr,
+	})
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return writeJSON(stdout, result)
+	}
+	if result.DryRun {
+		_, err = fmt.Fprintf(stdout, "Validated %s for %s scope at %s\n", result.Name, result.Scope, result.Target)
+		return err
+	}
+	if !result.Changed {
+		_, err = fmt.Fprintf(stdout, "No %s entry found for %s scope at %s\n", result.Name, result.Scope, result.Target)
+		return err
+	}
+	if _, err = fmt.Fprintf(stdout, "Removed %s for %s scope at %s\n", result.Name, result.Scope, result.Target); err != nil {
 		return err
 	}
 	if result.Backup != "" {
@@ -227,6 +273,26 @@ func filepathAbs(path string) (string, error) {
 	return filepath.Abs(path)
 }
 
+func localPaths() (string, string, string, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return "", "", "", errors.New("locate the nullselect executable")
+	}
+	executable, err = filepathAbs(executable)
+	if err != nil {
+		return "", "", "", errors.New("resolve the nullselect executable path")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", "", "", errors.New("locate the user home directory")
+	}
+	project, err := os.Getwd()
+	if err != nil {
+		return "", "", "", errors.New("locate the project directory")
+	}
+	return executable, home, project, nil
+}
+
 func writeJSON(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetEscapeHTML(false)
@@ -254,6 +320,7 @@ Run "nullselect mcp help" for MCP commands.
 func writeMCPUsage(writer io.Writer) {
 	fmt.Fprint(writer, `Usage:
   nullselect mcp install --client <client> [options]
+  nullselect mcp uninstall --client <client> [options]
   nullselect mcp doctor [options]
   nullselect mcp proxy [options]
 
