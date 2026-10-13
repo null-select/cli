@@ -174,6 +174,37 @@ func TestRemoveCodexIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemoveCodexVerifiesAbsence(t *testing.T) {
+	probes := 0
+	runs := 0
+	options := baseOptions(t.TempDir())
+	options.Client = "codex"
+	options.Scope = "user"
+	options.CommandExists = func(string) bool { return true }
+	options.CommandProbe = func(string, ...string) error {
+		probes++
+		if probes == 1 {
+			return nil
+		}
+		return errors.New("missing")
+	}
+	options.CommandRunner = func(name string, arguments ...string) error {
+		runs++
+		if !reflect.DeepEqual(append([]string{name}, arguments...), []string{"codex", "mcp", "remove", "null-select"}) {
+			t.Fatalf("unexpected command: %s %#v", name, arguments)
+		}
+		return nil
+	}
+
+	result, err := Remove(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Changed || probes != 2 || runs != 1 {
+		t.Fatalf("result=%#v probes=%d runs=%d", result, probes, runs)
+	}
+}
+
 func TestApplyCodexUsesSilentProbeAndEnvironmentReference(t *testing.T) {
 	var commands [][]string
 	probes := 0
@@ -194,8 +225,8 @@ func TestApplyCodexUsesSilentProbeAndEnvironmentReference(t *testing.T) {
 	if _, err := Apply(options); err != nil {
 		t.Fatal(err)
 	}
-	if probes != 1 {
-		t.Fatalf("probe called %d times, want 1", probes)
+	if probes != 2 {
+		t.Fatalf("probe called %d times, want 2", probes)
 	}
 	want := [][]string{
 		{"codex", "mcp", "remove", "null-select"},
@@ -203,6 +234,139 @@ func TestApplyCodexUsesSilentProbeAndEnvironmentReference(t *testing.T) {
 	}
 	if !reflect.DeepEqual(commands, want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)
+	}
+}
+
+func TestApplyClaudeCodeUsesDirectHTTPWithEnvironmentReference(t *testing.T) {
+	var commands [][]string
+	probes := 0
+	options := baseOptions(t.TempDir())
+	options.Client = "claude-code"
+	options.Scope = "project"
+	options.CommandExists = func(name string) bool { return name == "claude" }
+	options.CommandProbe = func(name string, arguments ...string) error {
+		probes++
+		if probes == 1 {
+			return errors.New("missing")
+		}
+		return nil
+	}
+	options.CommandRunner = func(name string, arguments ...string) error {
+		commands = append(commands, append([]string{name}, arguments...))
+		return nil
+	}
+
+	if _, err := Apply(options); err != nil {
+		t.Fatal(err)
+	}
+	if probes != 2 {
+		t.Fatalf("probe called %d times, want 2", probes)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("commands = %#v", commands)
+	}
+	command := commands[0]
+	if len(command) != 7 || !reflect.DeepEqual(command[:6], []string{"claude", "mcp", "add-json", "--scope", "project", "null-select"}) {
+		t.Fatalf("unexpected command: %#v", command)
+	}
+	var configuration map[string]any
+	if err := json.Unmarshal([]byte(command[6]), &configuration); err != nil {
+		t.Fatal(err)
+	}
+	if configuration["type"] != "http" || configuration["url"] != "https://console.null.select/mcp" {
+		t.Fatalf("unexpected configuration: %#v", configuration)
+	}
+	headers := configuration["headers"].(map[string]any)
+	if headers["Authorization"] != "Bearer ${NULL_SELECT_CREDENTIAL}" {
+		t.Fatalf("unexpected authorization reference: %#v", headers)
+	}
+	if strings.Contains(command[6], options.Executable) {
+		t.Fatal("Claude Code configuration unexpectedly uses the local proxy")
+	}
+}
+
+func TestJSONClientConfigurationMatrix(t *testing.T) {
+	tests := []struct {
+		name       string
+		client     string
+		scope      string
+		runtimeOS  string
+		targetPath func(string, string) string
+	}{
+		{name: "cursor-user", client: "cursor", scope: "user", targetPath: func(home, project string) string { return filepath.Join(home, ".cursor", "mcp.json") }},
+		{name: "cursor-project", client: "cursor", scope: "project", targetPath: func(home, project string) string { return filepath.Join(project, ".cursor", "mcp.json") }},
+		{name: "vscode-user", client: "vscode", scope: "user", targetPath: func(home, project string) string { return filepath.Join(home, ".copilot", "mcp-config.json") }},
+		{name: "vscode-project", client: "vscode", scope: "project", targetPath: func(home, project string) string { return filepath.Join(project, ".mcp.json") }},
+		{name: "copilot-user", client: "copilot", scope: "user", targetPath: func(home, project string) string { return filepath.Join(home, ".copilot", "mcp-config.json") }},
+		{name: "copilot-project", client: "copilot", scope: "project", targetPath: func(home, project string) string { return filepath.Join(project, ".mcp.json") }},
+		{name: "portable-project", client: "portable", scope: "project", targetPath: func(home, project string) string { return filepath.Join(project, ".mcp.json") }},
+		{name: "claude-desktop-macos", client: "claude-desktop", scope: "user", runtimeOS: "darwin", targetPath: func(home, project string) string {
+			return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json")
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			project := t.TempDir()
+			options := baseOptions(project)
+			options.Client = test.client
+			options.Scope = test.scope
+			options.HomeDirectory = home
+			options.RuntimeOS = test.runtimeOS
+
+			result, err := Apply(options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantTarget := test.targetPath(home, project)
+			if result.Target != wantTarget || !result.Changed {
+				t.Fatalf("unexpected result: %#v", result)
+			}
+			raw, err := os.ReadFile(wantTarget)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var document map[string]any
+			if err := json.Unmarshal(raw, &document); err != nil {
+				t.Fatal(err)
+			}
+			servers, ok := document["mcpServers"].(map[string]any)
+			if !ok {
+				t.Fatalf("missing portable mcpServers object: %#v", document)
+			}
+			entry := servers["null-select"].(map[string]any)
+			if entry["command"] != "/opt/nullselect/bin/nullselect" {
+				t.Fatalf("unexpected entry: %#v", entry)
+			}
+			arguments := entry["args"].([]any)
+			wantArguments := []any{"mcp", "proxy", "--endpoint", "https://console.null.select/mcp", "--credential-env", "NULL_SELECT_CREDENTIAL"}
+			if !reflect.DeepEqual(arguments, wantArguments) {
+				t.Fatalf("arguments = %#v, want %#v", arguments, wantArguments)
+			}
+		})
+	}
+}
+
+func TestUnsupportedClientScopeAndOperatingSystemFailClosed(t *testing.T) {
+	portable := baseOptions(t.TempDir())
+	portable.Scope = "user"
+	if _, err := Apply(portable); err == nil || !strings.Contains(err.Error(), "--scope project") {
+		t.Fatalf("unexpected portable error: %v", err)
+	}
+
+	desktop := baseOptions(t.TempDir())
+	desktop.Client = "claude-desktop"
+	desktop.Scope = "user"
+	desktop.RuntimeOS = "linux"
+	if _, err := Apply(desktop); err == nil || !strings.Contains(err.Error(), "macOS and Windows") {
+		t.Fatalf("unexpected Claude Desktop error: %v", err)
+	}
+
+	desktop.RuntimeOS = "windows"
+	desktop.Environment = func(string) string { return "" }
+	if _, err := Apply(desktop); err == nil || !strings.Contains(err.Error(), "APPDATA") {
+		t.Fatalf("unexpected Windows error: %v", err)
 	}
 }
 

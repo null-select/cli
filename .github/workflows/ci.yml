@@ -17,7 +17,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - run: go test -race ./...
       - run: go vet ./...
+      - run: govulncheck ./...
       - name: Cross-compile supported targets
         run: make cross-build VERSION=ci COMMIT="$GITHUB_SHA" BUILT_AT="1970-01-01T00:00:00Z"

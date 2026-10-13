@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   binaries:
@@ -18,17 +20,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install vulnerability scanner
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Verify
-        run: |
-          go test -race ./...
-          go vet ./...
+        run: make verify
       - name: Build release binaries
         run: |
           make cross-build \
             VERSION="${GITHUB_REF_NAME#v}" \
             COMMIT="$GITHUB_SHA" \
             BUILT_AT="$(git show -s --format=%cI "$GITHUB_SHA")"
-      - name: Publish immutable release assets
+      - name: Attest release candidate binaries
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/nullselect_*
+      - name: Create draft release candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
@@ -37,4 +43,5 @@ jobs:
           dist/checksums.txt
           --verify-tag
           --generate-notes
+          --draft
           --title "$GITHUB_REF_NAME"

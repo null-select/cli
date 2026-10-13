@@ -40,6 +40,8 @@ type Options struct {
 	CommandRunner    func(string, ...string) error
 	CommandProbe     func(string, ...string) error
 	CommandExists    func(string) bool
+	RuntimeOS        string
+	Environment      func(string) string
 	Now              func() time.Time
 }
 
@@ -109,7 +111,7 @@ func defaults(options Options) Options {
 		options.Stderr = io.Discard
 	}
 	if options.CommandRunner == nil {
-		options.CommandRunner = runCommand(options.Stdout, options.Stderr)
+		options.CommandRunner = runCommand(io.Discard, options.Stderr)
 	}
 	if options.CommandProbe == nil {
 		options.CommandProbe = runCommand(io.Discard, io.Discard)
@@ -119,6 +121,12 @@ func defaults(options Options) Options {
 			_, err := exec.LookPath(name)
 			return err == nil
 		}
+	}
+	if options.RuntimeOS == "" {
+		options.RuntimeOS = runtime.GOOS
+	}
+	if options.Environment == nil {
+		options.Environment = os.Getenv
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -177,6 +185,9 @@ func installCodex(options Options) (Result, error) {
 	); err != nil {
 		return Result{}, errors.New("add Codex MCP server")
 	}
+	if err := options.CommandProbe("codex", "mcp", "get", options.Name, "--json"); err != nil {
+		return Result{}, errors.New("verify Codex MCP server")
+	}
 	result.Changed = true
 	return result, nil
 }
@@ -198,6 +209,9 @@ func removeCodex(options Options) (Result, error) {
 	if err := options.CommandRunner("codex", "mcp", "remove", options.Name); err != nil {
 		return Result{}, errors.New("remove Codex MCP server")
 	}
+	if err := options.CommandProbe("codex", "mcp", "get", options.Name, "--json"); err == nil {
+		return Result{}, errors.New("verify removed Codex MCP server")
+	}
 	result.Changed = true
 	return result, nil
 }
@@ -218,13 +232,25 @@ func installClaudeCode(options Options) (Result, error) {
 			return Result{}, errors.New("remove existing Claude Code MCP server")
 		}
 	}
+	configuration, err := json.Marshal(map[string]any{
+		"type": "http",
+		"url":  options.Endpoint,
+		"headers": map[string]string{
+			"Authorization": "Bearer ${" + options.CredentialEnv + "}",
+		},
+	})
+	if err != nil {
+		return Result{}, errors.New("encode Claude Code MCP configuration")
+	}
 	arguments := []string{
-		"mcp", "add", "--scope", claudeScope(options.Scope), options.Name, "--",
-		options.Executable, "mcp", "proxy", "--endpoint", options.Endpoint,
-		"--credential-env", options.CredentialEnv,
+		"mcp", "add-json", "--scope", claudeScope(options.Scope), options.Name,
+		string(configuration),
 	}
 	if err := options.CommandRunner("claude", arguments...); err != nil {
 		return Result{}, errors.New("add Claude Code MCP server")
+	}
+	if err := options.CommandProbe("claude", "mcp", "get", options.Name); err != nil {
+		return Result{}, errors.New("verify Claude Code MCP server")
 	}
 	result.Changed = true
 	return result, nil
@@ -243,6 +269,9 @@ func removeClaudeCode(options Options) (Result, error) {
 	}
 	if err := options.CommandRunner("claude", "mcp", "remove", "--scope", claudeScope(options.Scope), options.Name); err != nil {
 		return Result{}, errors.New("remove Claude Code MCP server")
+	}
+	if err := options.CommandProbe("claude", "mcp", "get", options.Name); err == nil {
+		return Result{}, errors.New("verify removed Claude Code MCP server")
 	}
 	result.Changed = true
 	return result, nil
@@ -267,15 +296,15 @@ func installJSON(options Options) (Result, error) {
 			"--credential-env", options.CredentialEnv,
 		},
 	}
-	if options.Client == "vscode" {
-		entry["type"] = "stdio"
-	}
 	result := baseResult(options, target)
 	if options.DryRun {
 		return result, nil
 	}
 	backup, err := mergeJSONConfiguration(target, topLevel, options.Name, entry, options.Force, options.Now())
 	if err != nil {
+		return Result{}, err
+	}
+	if err := verifyJSONConfiguration(target, topLevel, options.Name, entry, true); err != nil {
 		return Result{}, err
 	}
 	result.Backup = backup
@@ -296,6 +325,11 @@ func removeJSON(options Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	if changed {
+		if err := verifyJSONConfiguration(target, topLevel, options.Name, nil, false); err != nil {
+			return Result{}, err
+		}
+	}
 	result.Backup = backup
 	result.Changed = changed
 	return result, nil
@@ -309,15 +343,15 @@ func configurationTarget(options Options) (string, string, error) {
 		}
 		return filepath.Join(options.HomeDirectory, ".cursor", "mcp.json"), "mcpServers", nil
 	case "vscode":
-		if options.Scope != "project" {
-			return "", "", errors.New("VS Code installation requires --scope project; use --client copilot for user scope")
+		if options.Scope == "project" {
+			return filepath.Join(options.ProjectDirectory, ".mcp.json"), "mcpServers", nil
 		}
-		return filepath.Join(options.ProjectDirectory, ".vscode", "mcp.json"), "servers", nil
+		return filepath.Join(options.HomeDirectory, ".copilot", "mcp-config.json"), "mcpServers", nil
 	case "claude-desktop":
 		if options.Scope != "user" {
 			return "", "", errors.New("Claude Desktop installation requires --scope user")
 		}
-		target, err := claudeDesktopPath(options.HomeDirectory)
+		target, err := claudeDesktopPath(options.HomeDirectory, options.RuntimeOS, options.Environment)
 		return target, "mcpServers", err
 	case "copilot":
 		if options.Scope == "project" {
@@ -325,31 +359,27 @@ func configurationTarget(options Options) (string, string, error) {
 		}
 		return filepath.Join(options.HomeDirectory, ".copilot", "mcp-config.json"), "mcpServers", nil
 	case "portable":
-		if options.Scope == "project" {
-			return filepath.Join(options.ProjectDirectory, ".mcp.json"), "mcpServers", nil
+		if options.Scope != "project" {
+			return "", "", errors.New("portable MCP configuration requires --scope project")
 		}
-		return filepath.Join(options.HomeDirectory, ".mcp.json"), "mcpServers", nil
+		return filepath.Join(options.ProjectDirectory, ".mcp.json"), "mcpServers", nil
 	default:
 		return "", "", fmt.Errorf("unsupported JSON client %q", options.Client)
 	}
 }
 
-func claudeDesktopPath(home string) (string, error) {
-	switch runtime.GOOS {
+func claudeDesktopPath(home, operatingSystem string, environment func(string) string) (string, error) {
+	switch operatingSystem {
 	case "darwin":
 		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"), nil
 	case "windows":
-		appData := os.Getenv("APPDATA")
+		appData := environment("APPDATA")
 		if appData == "" {
 			return "", errors.New("APPDATA is required for Claude Desktop on Windows")
 		}
 		return filepath.Join(appData, "Claude", "claude_desktop_config.json"), nil
 	default:
-		configHome := os.Getenv("XDG_CONFIG_HOME")
-		if configHome == "" {
-			configHome = filepath.Join(home, ".config")
-		}
-		return filepath.Join(configHome, "Claude", "claude_desktop_config.json"), nil
+		return "", errors.New("Claude Desktop installation is supported only on macOS and Windows")
 	}
 }
 
@@ -447,6 +477,40 @@ func removeJSONConfiguration(target, topLevel, name string, now time.Time) (stri
 		return "", false, err
 	}
 	return backup, true, nil
+}
+
+func verifyJSONConfiguration(target, topLevel, name string, expected map[string]any, shouldExist bool) error {
+	raw, err := os.ReadFile(target)
+	if err != nil {
+		return errors.New("verify MCP configuration")
+	}
+	if len(raw) > maximumConfigurationBytes {
+		return errors.New("verify MCP configuration")
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return errors.New("verify MCP configuration")
+	}
+	servers, ok := document[topLevel].(map[string]any)
+	if !ok {
+		return errors.New("verify MCP configuration")
+	}
+	entry, exists := servers[name]
+	if exists != shouldExist {
+		return errors.New("verify MCP configuration")
+	}
+	if !shouldExist {
+		return nil
+	}
+	got, err := json.Marshal(entry)
+	if err != nil {
+		return errors.New("verify MCP configuration")
+	}
+	want, err := json.Marshal(expected)
+	if err != nil || !bytes.Equal(got, want) {
+		return errors.New("verify MCP configuration")
+	}
+	return nil
 }
 
 func writeExclusive(path string, data []byte, mode fs.FileMode) error {
