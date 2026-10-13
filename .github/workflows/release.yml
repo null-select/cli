@@ -35,14 +35,16 @@ jobs:
         uses: actions/attest@v4
         with:
           subject-path: dist/nullselect_linux_*
-      - name: Publish release
+      - name: Publish immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME"
-          dist/nullselect_linux_amd64
-          dist/nullselect_linux_arm64
-          dist/checksums.txt
-          --verify-tag
-          --generate-notes
-          --title "$GITHUB_REF_NAME"
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/nullselect_linux_amd64 \
+            dist/nullselect_linux_arm64 \
+            dist/checksums.txt \
+            --verify-tag \
+            --generate-notes \
+            --draft \
+            --title "$GITHUB_REF_NAME"
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

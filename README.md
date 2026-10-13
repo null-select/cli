@@ -95,7 +95,7 @@ The public release contains `nullselect_linux_amd64`,
 then verify both its checksum and GitHub build provenance before installing it:
 
 ```sh
-VERSION=v0.1.0
+VERSION="$(gh release view --repo null-select/cli --json tagName --jq .tagName)"
 ARCH=amd64
 gh release download "$VERSION" \
   --repo null-select/cli \
@@ -110,6 +110,9 @@ nullselect version
 The provenance statement links the binary digest to the public repository,
 tag-triggered workflow, and commit that built it. It is not a claim that the
 binary is defect-free.
+
+Exact release checks, platform executions, and supported-client contract runs
+are recorded in [RELEASE-EVIDENCE.md](RELEASE-EVIDENCE.md).
 
 ## Security properties
 

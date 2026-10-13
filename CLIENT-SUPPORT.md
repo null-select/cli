@@ -13,13 +13,13 @@ downloads.
 
 | Target | Scope | Connection | Configuration contract | Verification state |
 |---|---|---|---|---|
-| Codex | user | native Streamable HTTP | `codex mcp add --url` with `--bearer-token-env-var` | Native command contract exercised with Codex CLI 0.162.1; managed doctor/revoke lifecycle proven separately |
-| Claude Code | user, project | native HTTP | `claude mcp add-json`; bearer header expands `${NULL_SELECT_CREDENTIAL}` at runtime | Native add/get/remove contract exercised with Claude Code 2.1.296 |
-| Cursor | user, project | local stdio bridge | `~/.cursor/mcp.json` or `.cursor/mcp.json`, top-level `mcpServers` | Atomic configuration fixture coverage; live client run required for release support |
-| VS Code | user, project | local stdio bridge | `~/.copilot/mcp-config.json` or workspace `.mcp.json`, top-level `mcpServers` | Atomic configuration fixture coverage; live client run required for release support |
-| GitHub Copilot | user, project | local stdio bridge | `~/.copilot/mcp-config.json` or workspace `.mcp.json`, top-level `mcpServers` | Atomic configuration fixture coverage; live client run required for release support |
+| Codex | user | native Streamable HTTP | `codex mcp add --url` with `--bearer-token-env-var` | Linux release artifact installed, verified, and removed the native configuration with Codex CLI 0.162.1; the same release completed managed doctor/revoke checks on AMD64 and ARM64 |
+| Claude Code | user, project | native HTTP | `claude mcp add-json`; bearer header expands `${NULL_SELECT_CREDENTIAL}` at runtime | Linux ARM64 release artifact installed a live connected configuration and removed it with Claude Code 2.1.296; managed doctor/revoke also passed on both published architectures |
+| Cursor | user, project | local stdio bridge | `~/.cursor/mcp.json` or `.cursor/mcp.json`, top-level `mcpServers` | Linux release artifact install/remove and atomic fixture coverage pass; live Cursor application run required for client support |
+| VS Code | user, project | local stdio bridge | `~/.copilot/mcp-config.json` or workspace `.mcp.json`, top-level `mcpServers` | Linux release artifact install/remove and atomic fixture coverage pass; live VS Code application run required for client support |
+| GitHub Copilot | user, project | local stdio bridge | `~/.copilot/mcp-config.json` or workspace `.mcp.json`, top-level `mcpServers` | Linux release artifact install/remove and atomic fixture coverage pass; live Copilot application run required for client support |
 | Claude Desktop | user | local stdio bridge | macOS or Windows `claude_desktop_config.json`, top-level `mcpServers` | Atomic configuration fixture coverage; live client run required for release support |
-| Portable | project | local stdio bridge | workspace `.mcp.json`, top-level `mcpServers` | Atomic configuration fixture coverage |
+| Portable | project | local stdio bridge | workspace `.mcp.json`, top-level `mcpServers` | Linux release artifact install/remove and atomic configuration fixture coverage pass |
 
 Claude Desktop is rejected on Linux because Anthropic distributes and
 documents the desktop application for macOS and Windows. The installer does
