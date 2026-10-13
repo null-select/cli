@@ -81,10 +81,35 @@ make build
 make cross-build
 ```
 
-`make cross-build` creates stripped, reproducible binaries and a SHA-256
-checksum file under `dist/` for Darwin, Linux, and Windows on AMD64 and ARM64.
-The release workflow creates an attested draft release candidate. It does not
-make unsigned macOS or Windows binaries public.
+`make cross-build` creates stripped, reproducible verification binaries for
+Darwin, Linux, and Windows on AMD64 and ARM64. `make linux-release` creates the
+two public Linux artifacts and their SHA-256 checksum file. Tagged builds test,
+scan, build, attest, and publish only Linux AMD64 and ARM64. macOS and Windows
+verification builds are not release assets.
+
+## Install the Linux release
+
+The public release contains `nullselect_linux_amd64`,
+`nullselect_linux_arm64`, and `checksums.txt`. Select the binary matching
+`uname -m` (`x86_64` maps to `amd64`; `aarch64` and `arm64` map to `arm64`),
+then verify both its checksum and GitHub build provenance before installing it:
+
+```sh
+VERSION=v0.1.0
+ARCH=amd64
+gh release download "$VERSION" \
+  --repo null-select/cli \
+  --pattern "nullselect_linux_${ARCH}" \
+  --pattern checksums.txt
+shasum -a 256 --check checksums.txt --ignore-missing
+gh attestation verify "nullselect_linux_${ARCH}" --repo null-select/cli
+install -m 0755 "nullselect_linux_${ARCH}" "$HOME/.local/bin/nullselect"
+nullselect version
+```
+
+The provenance statement links the binary digest to the public repository,
+tag-triggered workflow, and commit that built it. It is not a claim that the
+binary is defect-free.
 
 ## Security properties
 

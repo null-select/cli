@@ -7,6 +7,10 @@ support. A target is customer-supported only after its client and operating
 system row has a recorded install, doctor, tool-discovery, revoke, and
 uninstall run against a signed `nullselect` release artifact.
 
+The published binary matrix is Linux AMD64 and Linux ARM64. Darwin and Windows
+cross-builds are verification targets only and are not published as customer
+downloads.
+
 | Target | Scope | Connection | Configuration contract | Verification state |
 |---|---|---|---|---|
 | Codex | user | native Streamable HTTP | `codex mcp add --url` with `--bearer-token-env-var` | Native command contract exercised with Codex CLI 0.162.1; managed doctor/revoke lifecycle proven separately |

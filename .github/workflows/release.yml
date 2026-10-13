@@ -12,6 +12,7 @@ permissions:
 jobs:
   binaries:
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,24 +25,24 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
       - name: Verify
         run: make verify
-      - name: Build release binaries
+      - name: Build public Linux release binaries
         run: |
-          make cross-build \
+          make linux-release \
             VERSION="${GITHUB_REF_NAME#v}" \
             COMMIT="$GITHUB_SHA" \
             BUILT_AT="$(git show -s --format=%cI "$GITHUB_SHA")"
-      - name: Attest release candidate binaries
+      - name: Attest release binaries
         uses: actions/attest@v4
         with:
-          subject-path: dist/nullselect_*
-      - name: Create draft release candidate
+          subject-path: dist/nullselect_linux_*
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release create "$GITHUB_REF_NAME"
-          dist/nullselect_*
+          dist/nullselect_linux_amd64
+          dist/nullselect_linux_arm64
           dist/checksums.txt
           --verify-tag
           --generate-notes
-          --draft
           --title "$GITHUB_REF_NAME"
