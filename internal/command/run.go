@@ -15,6 +15,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/null-select/cli/internal/bridge"
 	"github.com/null-select/cli/internal/doctor"
+	"github.com/null-select/cli/internal/evidence"
 	"github.com/null-select/cli/internal/install"
 )
 
@@ -39,9 +40,40 @@ func Run(ctx context.Context, arguments []string, stdout, stderr io.Writer, buil
 		return runVersion(arguments[1:], stdout, stderr, build)
 	case "mcp":
 		return runMCP(ctx, arguments[1:], stdout, stderr, build)
+	case "evidence":
+		return runEvidence(arguments[1:], stdout, stderr)
 	default:
 		return fmt.Errorf("unknown command %q; run nullselect help", arguments[0])
 	}
+}
+
+func runEvidence(arguments []string, stdout, stderr io.Writer) error {
+	if len(arguments) == 0 || arguments[0] == "help" || arguments[0] == "-h" || arguments[0] == "--help" {
+		fmt.Fprint(stdout, "Usage:\n  nullselect evidence verify [--keyring <keys.json>] [--json] <packet.zip>\n")
+		return nil
+	}
+	if arguments[0] != "verify" {
+		return fmt.Errorf("unknown evidence command %q; run nullselect evidence help", arguments[0])
+	}
+	flags := flag.NewFlagSet("evidence verify", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	keyring := flags.String("keyring", "", "optional offline public verification key set")
+	jsonOutput := flags.Bool("json", false, "write machine-readable JSON")
+	if err := flags.Parse(arguments[1:]); err != nil {
+		return flagError(err)
+	}
+	if flags.NArg() != 1 {
+		return errors.New("evidence verify requires exactly one packet ZIP")
+	}
+	result, err := evidence.Verify(flags.Arg(0), *keyring)
+	if err != nil {
+		return err
+	}
+	if *jsonOutput {
+		return writeJSON(stdout, result)
+	}
+	_, err = fmt.Fprintf(stdout, "Evidence packet verified\nPacket: %s\nExecution: %s\nEnvironment: %s\nSigning key: %s\nEvents: %d\nAudit tip: %s\n", result.PacketID, result.ExecutionID, result.EnvironmentID, result.SigningKeyID, result.EventCount, result.AuditTip)
+	return err
 }
 
 func runVersion(arguments []string, stdout, stderr io.Writer, build Build) error {
@@ -312,8 +344,9 @@ func writeUsage(writer io.Writer) {
 Usage:
   nullselect version [--json]
   nullselect mcp <command>
+  nullselect evidence verify [options] <packet.zip>
 
-Run "nullselect mcp help" for MCP commands.
+Run "nullselect mcp help" or "nullselect evidence help" for command details.
 `)
 }
 

@@ -11,6 +11,7 @@ nullselect mcp install --client <client> [options]
 nullselect mcp uninstall --client <client> [options]
 nullselect mcp doctor [options]
 nullselect mcp proxy [options]
+nullselect evidence verify [--keyring <keys.json>] [--json] <packet.zip>
 ```
 
 Implemented install targets are Codex, Claude Code, Cursor, VS Code, Claude
@@ -37,6 +38,28 @@ The CLI accepts the environment variable's name, never the credential itself,
 as a command-line argument. The installer writes only that variable name to
 configuration. `mcp doctor` and `mcp proxy` read its value at runtime. This
 keeps the credential out of process arguments and client configuration files.
+
+## Verify execution evidence offline
+
+Download a signed packet from an execution in the null.select Audit console,
+then verify it without an account, token, or network connection:
+
+```sh
+nullselect evidence verify null-select-pkt_….zip
+```
+
+The binary contains the current production Ed25519 public key. A retained
+public key set downloaded before going offline can add rotation keys:
+
+```sh
+nullselect evidence verify --keyring evidence-keys.json null-select-pkt_….zip
+```
+
+Verification enforces the exact bounded ZIP member set, canonical signed
+manifest, SHA-256 member digests, complete audit hash chain, event count and
+tip, release evidence, activation evidence, and schema versions. It never
+executes packet content. A valid packet is evidence of the gateway controls and
+observations it contains, not certification of unobservable upstream effects.
 
 ## Install a client connection
 
