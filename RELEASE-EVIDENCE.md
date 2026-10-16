@@ -1,6 +1,6 @@
 # Release evidence
 
-Verification date: 2026-10-13
+Verification date: 2026-10-16
 
 ## Published contract
 
@@ -74,3 +74,36 @@ credential `cred_34fd7c78c493df0222751b65`, negotiated MCP `2026-07-28`,
 identified `null-select-managed` version `0.1.0`, and listed one tool. The
 credential was revoked immediately after the checks, and the next AMD64 doctor
 connection failed as unauthorized.
+
+## v0.2.0 immutable release
+
+Source commit: `75dad198686874668f3d75ed85ab0cfd2fb688d1`
+
+| Asset | SHA-256 |
+|---|---|
+| `nullselect_linux_amd64` | `80cd6c4d1739e2c552b681b5e12a3f0d720b18158773b32f8df0e31c94560a9f` |
+| `nullselect_linux_arm64` | `39e0272907cad1909071aacabd8fc031524329088ed7d6a0aa4724b6e0942560` |
+
+GitHub Actions run `38942022549` completed the tests, race detector, vet,
+vulnerability scan, cross-compilation, checksum generation, artifact
+attestations, and immutable publication. Both downloaded assets matched
+`checksums.txt`; `gh attestation verify` resolved both to SLSA provenance v1
+from the public repository workflow and transparency log.
+
+Release `v0.2.0` adds offline verification of
+`null.select.evidence-packet.v1`. Verification accepts only the four fixed ZIP
+members, checks archive and member bounds, requires a canonical signed
+manifest from a trusted Ed25519 key, verifies every member digest and size,
+then recomputes the complete `null.select.audit-export.v3` event chain, event
+count, chain tip, immutable release evidence, and activation evidence. It does
+not require an account, credential, or network request.
+
+The downloaded AMD64 and ARM64 binaries each verified packets issued directly
+by both live gateway replicas for executions
+`exec_30c44a947f895d8f2a3c5cb2` and
+`exec_c1041964ac9085b6211e7cb1`. The packets were signed by retained key
+`evidence-2026-10`, contained the exact four allowed members and nine-event
+verified chains, and were generated before proof credential
+`cred_93fe5789ba7ff1cd3adbdb46` was revoked. Its next production request was
+rejected. Packet contents and issuance metadata contained no credential,
+argument, output, upstream body, or private signing-key material.
